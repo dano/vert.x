@@ -65,6 +65,8 @@ public abstract class TCPSSLOptions extends NetworkOptions {
    */
   public static final boolean DEFAULT_USE_ALPN = false;
 
+  public static final SSLEngine DEFAULT_SSL_ENGINE = SSLEngine.JDK;
+
   private boolean tcpNoDelay;
   private boolean tcpKeepAlive;
   private int soLinger;
@@ -77,6 +79,7 @@ public abstract class TCPSSLOptions extends NetworkOptions {
   private ArrayList<String> crlPaths;
   private ArrayList<Buffer> crlValues;
   private boolean useAlpn;
+  private SSLEngine sslEngine;
 
   /**
    * Default constructor
@@ -105,6 +108,7 @@ public abstract class TCPSSLOptions extends NetworkOptions {
     this.crlPaths = new ArrayList<>(other.getCrlPaths());
     this.crlValues = new ArrayList<>(other.getCrlValues());
     this.useAlpn = other.useAlpn;
+    this.sslEngine = other.sslEngine;
   }
 
   /**
@@ -128,6 +132,7 @@ public abstract class TCPSSLOptions extends NetworkOptions {
     crlPaths = new ArrayList<>();
     crlValues = new ArrayList<>();
     useAlpn = DEFAULT_USE_ALPN;
+    sslEngine = DEFAULT_SSL_ENGINE;
   }
 
   /**
@@ -397,6 +402,24 @@ public abstract class TCPSSLOptions extends NetworkOptions {
    */
   public TCPSSLOptions setUseAlpn(boolean useAlpn) {
     this.useAlpn = useAlpn;
+    return this;
+  }
+
+  /**
+   * @return the SSL engine implementation to use
+   */
+  public SSLEngine getSslEngine() {
+    return sslEngine;
+  }
+
+  /**
+   * Set to use SSL engine implementation to use.
+   *
+   * @param sslEngine the ssl engine to use
+   * @return a reference to this, so the API can be used fluently
+   */
+  public TCPSSLOptions setSslEngine(SSLEngine sslEngine) {
+    this.sslEngine = sslEngine;
     return this;
   }
 
