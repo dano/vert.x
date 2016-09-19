@@ -24,13 +24,16 @@ import io.vertx.core.logging.LoggerFactory;
 import io.vertx.core.spi.metrics.EventBusMetrics;
 import io.vertx.core.spi.metrics.MetricsProvider;
 
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Stream;
 
 /**
  * A local event bus implementation
@@ -46,6 +49,7 @@ public class EventBusImpl implements EventBus, MetricsProvider {
   protected final VertxInternal vertx;
   protected final EventBusMetrics metrics;
   protected final ConcurrentMap<String, Handlers> handlerMap = new ConcurrentHashMap<>();
+  protected final ConcurrentMap<String, Handlers> regexHandlerMap = new ConcurrentHashMap<>();
   protected final CodecManager codecManager = new CodecManager();
   protected volatile boolean started;
 
@@ -134,13 +138,25 @@ public class EventBusImpl implements EventBus, MetricsProvider {
 
   @Override
   public <T> MessageConsumer<T> consumer(String address) {
+    return consumer(address, false);
+  }
+
+  @Override
+  public <T> MessageConsumer<T> consumer(String address, boolean useWildcards) {
     checkStarted();
     Objects.requireNonNull(address, "address");
-    return new HandlerRegistration<>(vertx, metrics, this, address, null, false, null, -1);
+    return new HandlerRegistration<>(vertx, metrics, this, address, null, false, useWildcards,
+        null, -1);
   }
 
   @Override
   public <T> MessageConsumer<T> consumer(String address, Handler<Message<T>> handler) {
+    return consumer(address, false, handler);
+  }
+
+  @Override
+  public <T> MessageConsumer<T> consumer(String address, boolean useWildcards,
+      Handler<Message<T>> handler) {
     Objects.requireNonNull(handler, "handler");
     MessageConsumer<T> consumer = consumer(address);
     consumer.handler(handler);
@@ -151,7 +167,8 @@ public class EventBusImpl implements EventBus, MetricsProvider {
   public <T> MessageConsumer<T> localConsumer(String address) {
     checkStarted();
     Objects.requireNonNull(address, "address");
-    return new HandlerRegistration<>(vertx, metrics, this, address, null, true, null, -1);
+    return new HandlerRegistration<>(vertx, metrics, this, address, null, true, false,
+        null, -1);
   }
 
   @Override
@@ -217,20 +234,22 @@ public class EventBusImpl implements EventBus, MetricsProvider {
   }
 
   protected <T> void addRegistration(String address, HandlerRegistration<T> registration,
-                                     boolean replyHandler, boolean localOnly) {
+                                     boolean replyHandler, boolean localOnly, boolean useWildcards) {
     Objects.requireNonNull(registration.getHandler(), "handler");
-    boolean newAddress = addLocalRegistration(address, registration, replyHandler, localOnly);
-    addRegistration(newAddress, address, replyHandler, localOnly, registration::setResult);
+    boolean newAddress = addLocalRegistration(address, registration, replyHandler, localOnly, useWildcards);
+    addRegistration(newAddress, address, replyHandler, localOnly, useWildcards, registration::setResult);
   }
 
   protected <T> void addRegistration(boolean newAddress, String address,
                                      boolean replyHandler, boolean localOnly,
+                                     boolean useWildcards,
                                      Handler<AsyncResult<Void>> completionHandler) {
     completionHandler.handle(Future.succeededFuture());
   }
 
   protected <T> boolean addLocalRegistration(String address, HandlerRegistration<T> registration,
-                                             boolean replyHandler, boolean localOnly) {
+                                             boolean replyHandler, boolean localOnly,
+                                             boolean useWildcards) {
     Objects.requireNonNull(address, "address");
 
     Context context = Vertx.currentContext();
@@ -243,12 +262,20 @@ public class EventBusImpl implements EventBus, MetricsProvider {
 
     boolean newAddress = false;
 
-    HandlerHolder holder = new HandlerHolder<>(metrics, registration, replyHandler, localOnly, context);
+    HandlerHolder holder = new HandlerHolder<>(metrics, registration, replyHandler, localOnly, useWildcards, context);
 
-    Handlers handlers = handlerMap.get(address);
+    Handlers handlers;
+    ConcurrentMap<String, Handlers> hMap;
+    if (useWildcards) {
+      handlers = regexHandlerMap.get(address);
+      hMap = regexHandlerMap;
+    } else {
+      handlers = handlerMap.get(address);
+      hMap = handlerMap;
+    }
     if (handlers == null) {
       handlers = new Handlers();
-      Handlers prevHandlers = handlerMap.putIfAbsent(address, handlers);
+      Handlers prevHandlers = hMap.putIfAbsent(address, handlers);
       if (prevHandlers != null) {
         handlers = prevHandlers;
       }
@@ -275,26 +302,32 @@ public class EventBusImpl implements EventBus, MetricsProvider {
   }
 
   protected <T> HandlerHolder removeLocalRegistration(String address, HandlerRegistration<T> handler) {
-    Handlers handlers = handlerMap.get(address);
     HandlerHolder lastHolder = null;
-    if (handlers != null) {
-      synchronized (handlers) {
-        int size = handlers.list.size();
-        // Requires a list traversal. This is tricky to optimise since we can't use a set since
-        // we need fast ordered traversal for the round robin
-        for (int i = 0; i < size; i++) {
-          HandlerHolder holder = handlers.list.get(i);
-          if (holder.getHandler() == handler) {
-            handlers.list.remove(i);
-            holder.setRemoved();
-            if (handlers.list.isEmpty()) {
-              handlerMap.remove(address);
-              lastHolder = holder;
+    for (ConcurrentMap<String, Handlers> hMap : Arrays.asList(handlerMap, regexHandlerMap)) {
+      Handlers handlers = hMap.get(address);
+      if (handlers != null) {
+        synchronized (handlers) {
+          int size = handlers.list.size();
+          // Requires a list traversal. This is tricky to optimise since we can't use a set since
+          // we need fast ordered traversal for the round robin
+          for (int i = 0; i < size; i++) {
+            HandlerHolder holder = handlers.list.get(i);
+            if (holder.getHandler() == handler) {
+              handlers.list.remove(i);
+              holder.setRemoved();
+              if (handlers.list.isEmpty()) {
+                hMap.remove(address);
+                lastHolder = holder;
+              }
+              holder.getContext().removeCloseHook(new HandlerEntry<>(address, holder.getHandler()));
+              break;
             }
-            holder.getContext().removeCloseHook(new HandlerEntry<>(address, holder.getHandler()));
-            break;
           }
         }
+      }
+      if (lastHolder != null) {
+        // Don't check the second map if we found it in the first.
+        break;
       }
     }
     return lastHolder;
@@ -358,10 +391,25 @@ public class EventBusImpl implements EventBus, MetricsProvider {
     return true;
   }
 
+  private Handlers regexGet(String address) {
+    return regexHandlerMap.keySet().stream()
+        .filter(address::startsWith)
+        .findFirst()
+        .map(regexHandlerMap::get)
+        .orElse(null);
+  }
+
+  private CompoundHandlers getHandlersForAddress(String address) {
+    Handlers handlers = handlerMap.get(address);
+    Handlers regexHandlers = regexGet(address);
+    return new CompoundHandlers(handlers, regexHandlers);
+  }
+
   protected <T> boolean deliverMessageLocally(MessageImpl msg) {
     msg.setBus(this);
-    Handlers handlers = handlerMap.get(msg.address());
-    if (handlers != null) {
+    // TODO Need to keep the atomic int in CompoundHandlers across calls....
+    CompoundHandlers handlers = getHandlersForAddress(msg.address());
+    if (!handlers.isNull()) {
       if (msg.send()) {
         //Choose one
         HandlerHolder holder = handlers.choose();
@@ -371,10 +419,8 @@ public class EventBusImpl implements EventBus, MetricsProvider {
         }
       } else {
         // Publish
-        metrics.messageReceived(msg.address(), !msg.send(), isMessageLocal(msg), handlers.list.size());
-        for (HandlerHolder holder: handlers.list) {
-          deliverToHandler(msg, holder);
-        }
+        metrics.messageReceived(msg.address(), !msg.send(), isMessageLocal(msg), handlers.size());
+        handlers.stream().forEach(holder -> deliverToHandler(msg, holder));
       }
       return true;
     } else {
@@ -402,7 +448,8 @@ public class EventBusImpl implements EventBus, MetricsProvider {
       message.setReplyAddress(replyAddress);
       Handler<Message<T>> simpleReplyHandler = convertHandler(replyHandler);
       HandlerRegistration<T> registration =
-        new HandlerRegistration<>(vertx, metrics, this, replyAddress, message.address, true, replyHandler, timeout);
+        new HandlerRegistration<>(vertx, metrics, this, replyAddress, message.address, true,
+            false, replyHandler, timeout);
       registration.handler(simpleReplyHandler);
       return registration;
     } else {
@@ -481,11 +528,12 @@ public class EventBusImpl implements EventBus, MetricsProvider {
 
   private void unregisterAll() {
     // Unregister all handlers explicitly - don't rely on context hooks
-    for (Handlers handlers: handlerMap.values()) {
-      for (HandlerHolder holder: handlers.list) {
-        holder.getHandler().unregister(true);
-      }
-    }
+    Stream.concat(handlerMap.values().stream(), regexHandlerMap.values().stream())
+        .forEach(handlers -> {
+          for (HandlerHolder holder: handlers.list) {
+            holder.getHandler().unregister(true);
+          }
+        });
   }
 
   private <T> void deliverToHandler(MessageImpl msg, HandlerHolder<T> holder) {

@@ -35,6 +35,7 @@ public class HandlerRegistration<T> implements MessageConsumer<T>, Handler<Messa
   private final String address;
   private final String repliedAddress;
   private final boolean localOnly;
+  private final boolean useWildcards;
   private final Handler<AsyncResult<Message<T>>> asyncResultHandler;
   private long timeoutID = -1;
   private boolean registered;
@@ -49,15 +50,16 @@ public class HandlerRegistration<T> implements MessageConsumer<T>, Handler<Messa
   private boolean paused;
   private Object metric;
 
-  public HandlerRegistration(Vertx vertx, EventBusMetrics metrics, EventBusImpl eventBus, String address,
-                             String repliedAddress, boolean localOnly,
-                             Handler<AsyncResult<Message<T>>> asyncResultHandler, long timeout) {
+  public HandlerRegistration(Vertx vertx, EventBusMetrics metrics, EventBusImpl eventBus,
+      String address, String repliedAddress, boolean localOnly, boolean useWildcards,
+      Handler<AsyncResult<Message<T>>> asyncResultHandler, long timeout) {
     this.vertx = vertx;
     this.metrics = metrics;
     this.eventBus = eventBus;
     this.address = address;
     this.repliedAddress = repliedAddress;
     this.localOnly = localOnly;
+    this.useWildcards = useWildcards;
     this.asyncResultHandler = asyncResultHandler;
     if (timeout != -1) {
       timeoutID = vertx.setTimer(timeout, tid -> {
@@ -247,7 +249,7 @@ public class HandlerRegistration<T> implements MessageConsumer<T>, Handler<Messa
     this.handler = handler;
     if (this.handler != null && !registered) {
       registered = true;
-      eventBus.addRegistration(address, this, repliedAddress != null, localOnly);
+      eventBus.addRegistration(address, this, repliedAddress != null, localOnly, useWildcards);
     } else if (this.handler == null && registered) {
       // This will set registered to false
       this.unregister();

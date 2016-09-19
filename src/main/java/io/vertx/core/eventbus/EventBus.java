@@ -117,9 +117,24 @@ public interface EventBus extends Measured {
    * is called.
    *
    * @param address  the address that it will register it at
+   *
    * @return the event bus message consumer
    */
   <T> MessageConsumer<T> consumer(String address);
+
+  /**
+   * Create a message consumer against the specified address.
+   * <p>
+   * The returned consumer is not yet registered
+   * at the address, registration will be effective when {@link MessageConsumer#handler(io.vertx.core.Handler)}
+   * is called.
+   *
+   * @param address  the address that it will register it at
+   * @param useWildcards  if true, the address will be matched with wildcards.
+   *
+   * @return the event bus message consumer
+   */
+  <T> MessageConsumer<T> consumer(String address, boolean useWildcards);
 
   /**
    * Create a consumer and register it against the specified address.
@@ -130,6 +145,17 @@ public interface EventBus extends Measured {
    * @return the event bus message consumer
    */
   <T> MessageConsumer<T> consumer(String address, Handler<Message<T>> handler);
+
+  /**
+   * Create a consumer and register it against the specified address.
+   *
+   * @param address  the address that will register it at
+   * @param useWildcards  if true, the address will be matched with wildcards.
+   * @param handler  the handler that will process the received messages
+   *
+   * @return the event bus message consumer
+   */
+  <T> MessageConsumer<T> consumer(String address, boolean useWildcards, Handler<Message<T>> handler);
 
   /**
    * Like {@link #consumer(String)} but the address won't be propagated across the cluster.

@@ -13,15 +13,17 @@ public class HandlerHolder<T> {
   private final HandlerRegistration<T> handler;
   private final boolean replyHandler;
   private final boolean localOnly;
+  private final boolean useWildcards;
   private boolean removed;
 
   public HandlerHolder(EventBusMetrics metrics, HandlerRegistration<T> handler, boolean replyHandler, boolean localOnly,
-                       Context context) {
+                       boolean useWildcards, Context context) {
     this.metrics = metrics;
     this.context = context;
     this.handler = handler;
     this.replyHandler = replyHandler;
     this.localOnly = localOnly;
+    this.useWildcards = useWildcards;
   }
 
   // We use a synchronized block to protect removed as it can be unregistered from a different thread
@@ -73,5 +75,7 @@ public class HandlerHolder<T> {
   public boolean isLocalOnly() {
     return localOnly;
   }
+
+  public boolean usesWildcards() { return useWildcards; }
 ;
 }

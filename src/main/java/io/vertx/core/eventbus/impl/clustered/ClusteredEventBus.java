@@ -184,6 +184,7 @@ public class ClusteredEventBus extends EventBusImpl {
   @Override
   protected <T> void addRegistration(boolean newAddress, String address,
                                      boolean replyHandler, boolean localOnly,
+                                     boolean useWildcards,
                                      Handler<AsyncResult<Void>> completionHandler) {
     if (newAddress && subs != null && !replyHandler && !localOnly) {
       // Propagate the information

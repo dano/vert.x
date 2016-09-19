@@ -1326,5 +1326,20 @@ public class LocalEventBusTest extends EventBusTestBase {
     });
     await();
   }
+
+  @Test
+  public void testWildcardConsumer() throws Exception {
+    Context ctx = vertx.getOrCreateContext();
+    CountDownLatch latch = new CountDownLatch(1);
+    ctx.runOnContext(v1 -> {
+      MessageConsumer<String> consumer = eb.consumer(ADDRESS1, true);
+      consumer.<String>handler(result -> {
+        assertEquals(result.body(), "hey");
+        latch.countDown();
+      });
+      eb.send(ADDRESS1 + "HEY", "hey");
+    });
+    awaitLatch(latch);
+  }
 }
 
