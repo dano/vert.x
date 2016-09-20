@@ -37,6 +37,8 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.StreamSupport;
 
 /**
  * An event bus implementation that clusters with other Vert.x nodes
@@ -53,6 +55,9 @@ public class ClusteredEventBus extends EventBusImpl {
   private static final Buffer PONG = Buffer.buffer(new byte[] { (byte)1 });
   private static final String SERVER_ID_HA_KEY = "server_id";
   private static final String SUBS_MAP_NAME = "__vertx.subs";
+  private static final String REGEX_SUBS_MAP_NAME = "__vertx.regex_subs";
+  private static final String REGEX_KEYS_MAP_NAME = "__vertx.regex_keys";
+  private static final String REGEX_KEYS_KEY = "keys";
 
   private final ClusterManager clusterManager;
   private final HAManager haManager;
@@ -61,6 +66,8 @@ public class ClusteredEventBus extends EventBusImpl {
 
   private EventBusOptions options;
   private AsyncMultiMap<String, ServerID> subs;
+  private AsyncMultiMap<String, ServerID> regexSubs;
+  private AsyncMultiMap<String, String> regexKeys;
   private ServerID serverID;
   private NetServer server;
 
@@ -113,9 +120,17 @@ public class ClusteredEventBus extends EventBusImpl {
 
   @Override
   public void start(Handler<AsyncResult<Void>> resultHandler) {
-    clusterManager.<String, ServerID>getAsyncMultiMap(SUBS_MAP_NAME, ar2 -> {
-      if (ar2.succeeded()) {
+    Future<AsyncMultiMap<String, ServerID>> ar2 = Future.future();
+    Future<AsyncMultiMap<String, ServerID>> ar3 = Future.future();
+    Future<AsyncMultiMap<String, String>> ar4 = Future.future();
+    clusterManager.getAsyncMultiMap(SUBS_MAP_NAME, ar2.completer());
+    clusterManager.getAsyncMultiMap(REGEX_SUBS_MAP_NAME, ar3.completer());
+    clusterManager.getAsyncMultiMap(REGEX_KEYS_MAP_NAME, ar4.completer());
+    CompositeFuture.all(ar2, ar3, ar4).setHandler(r -> {
+      if (ar2.succeeded() && ar3.succeeded() && ar4.succeeded()) {
         subs = ar2.result();
+        regexSubs = ar3.result();
+        regexKeys = ar4.result();
         server = vertx.createNetServer(getServerOptions());
 
         server.connectHandler(getServerHandler());
@@ -138,10 +153,11 @@ public class ClusteredEventBus extends EventBusImpl {
           }
         });
       } else {
+        Throwable cause = ar2.failed() ? ar2.cause() : ar3.failed() ? ar3.cause() : ar4.cause();
         if (resultHandler != null) {
-          resultHandler.handle(Future.failedFuture(ar2.cause()));
+          resultHandler.handle(Future.failedFuture(cause));
         } else {
-          log.error(ar2.cause());
+          log.error(cause);
         }
       }
     });
@@ -188,7 +204,17 @@ public class ClusteredEventBus extends EventBusImpl {
                                      Handler<AsyncResult<Void>> completionHandler) {
     if (newAddress && subs != null && !replyHandler && !localOnly) {
       // Propagate the information
-      subs.add(address, serverID, completionHandler);
+      if (!useWildcards) {
+        subs.add(address, serverID, completionHandler);
+      } else {
+        regexKeys.add(REGEX_KEYS_KEY, address, result -> {
+          if (result.succeeded()) {
+            regexSubs.add(address, serverID, completionHandler);
+          } else {
+            completionHandler.handle(result);
+          }
+        });
+      }
     } else {
       completionHandler.handle(Future.succeededFuture());
     }
@@ -198,7 +224,11 @@ public class ClusteredEventBus extends EventBusImpl {
   protected <T> void removeRegistration(HandlerHolder lastHolder, String address,
                                         Handler<AsyncResult<Void>> completionHandler) {
     if (lastHolder != null && subs != null && !lastHolder.isLocalOnly()) {
-      removeSub(address, serverID, completionHandler);
+      if (!lastHolder.usesWildcards()) {
+        removeSub(address, serverID, completionHandler);
+      } else {
+//        removeWildcardSub(address, serverID, completionHandler);
+      }
     } else {
       callCompletionHandlerAsync(completionHandler);
     }
@@ -209,7 +239,6 @@ public class ClusteredEventBus extends EventBusImpl {
     clusteredSendReply(((ClusteredMessage) replierMessage).getSender(), sendContext);
   }
 
-  @Override
   protected <T> void sendOrPub(SendContextImpl<T> sendContext) {
     String address = sendContext.message.address();
     Handler<AsyncResult<ChoosableIterable<ServerID>>> resultHandler = asyncResult -> {
@@ -234,6 +263,53 @@ public class ClusteredEventBus extends EventBusImpl {
       subs.get(address, resultHandler);
     }
   }
+
+//  @Override
+//  protected <T> void sendOrPub(SendContextImpl<T> sendContext) {
+//    String address = sendContext.message.address();
+//    Handler<AsyncResult<CompositeFuture>> resultHandler = asyncResult -> {
+//      if (asyncResult.succeeded()) {
+//        ChoosableIterable<ServerID> serverIDs = asyncResult.result().resultAt(0);
+//        ChoosableIterable<ServerID> regexServerIDs = asyncResult.result().resultAt(1);
+//        ChoosableIterable<ServerID> hah = new CompoundChoosableIterable<>(new AtomicInteger(0), serverIDs, regexServerIDs);
+//        if (!hah.isEmpty()) {
+//          sendToSubs(hah, sendContext);
+//        } else {
+//          metrics.messageSent(address, !sendContext.message.send(), true, false);
+//          deliverMessageLocally(sendContext);
+//        }
+//      } else {
+//        log.error("Failed to send message", asyncResult.cause());
+//      }
+//    };
+//    Future<ChoosableIterable<ServerID>> subFut = Future.future();
+//    Future<ChoosableIterable<ServerID>> regexSubFut = Future.future();
+//    Handler<Void> h = v -> {
+//      subs.get(address, subFut.completer());
+//      regexKeys.get(REGEX_KEYS_KEY, result -> {
+//        if (result.succeeded()) {
+//          String key = StreamSupport.stream(result.result().spliterator(), false)
+//              .filter(address::startsWith)
+//              .findFirst()
+//              .orElse(null);
+//          if (key != null) {
+//            regexSubs.get(key, regexSubFut.completer());
+//          } else {
+//            regexSubFut.complete(null);
+//          }
+//        } else {
+//          resultHandler.handle(Future.failedFuture(result.cause()));
+//        }
+//      });
+//      CompositeFuture.all(subFut, regexSubFut).setHandler(resultHandler);
+//    };
+//    if (Vertx.currentContext() == null) {
+//      // Guarantees the order when there is no current context
+//      sendNoContext.runOnContext(h);
+//    } else {
+//      h.handle(null);
+//    }
+//  }
 
   @Override
   protected String generateReplyAddress() {

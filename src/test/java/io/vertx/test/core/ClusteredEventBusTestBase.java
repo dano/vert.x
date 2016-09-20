@@ -30,6 +30,7 @@ import java.util.ArrayList;
 import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -81,7 +82,6 @@ public class ClusteredEventBusTestBase extends EventBusTestBase {
     await();
   }
 
-  @Override
   protected <T, R> void testSendWildcard(T val, R received, Consumer<T> consumer, DeliveryOptions options) {
     if (vertices == null) {
       startNodes(2);
@@ -113,7 +113,7 @@ public class ClusteredEventBusTestBase extends EventBusTestBase {
         vertices[0].eventBus().send(ADDRESS1 + ADDRESS2, val, options);
       }
     });
-    await();
+    await(10, TimeUnit.SECONDS);
 
   }
 
@@ -307,7 +307,7 @@ public class ClusteredEventBusTestBase extends EventBusTestBase {
     reg = vertices[1].eventBus().<T>consumer(ADDRESS1, true).handler(new MyHandler());
     reg.completionHandler(new MyRegisterHandler());
     vertices[0].eventBus().publish(ADDRESS1 + ADDRESS2, val);
-    await();
+    await(10, TimeUnit.SECONDS);
 
   }
 

@@ -21,12 +21,14 @@ import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.VertxOptions;
 import io.vertx.core.eventbus.*;
+import io.vertx.core.eventbus.impl.clustered.ClusteredEventBus;
 import io.vertx.core.impl.VertxInternal;
 import io.vertx.core.spi.cluster.ClusterManager;
 import io.vertx.test.fakecluster.FakeClusterManager;
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.CountDownLatch;
@@ -227,6 +229,95 @@ public class ClusteredEventBusTest extends ClusteredEventBusTestBase {
 
   }
 
+  @Test
+  public void testRoundRobining() throws Exception {
+    startNodes(3);
+    CountDownLatch regLatch = new CountDownLatch(1);
+    AtomicInteger cnt = new AtomicInteger();
+    List<MessageConsumer> consumers = new ArrayList<>();
+    vertices[0].eventBus().consumer(ADDRESS1, msg -> {
+      System.out.println("In 1");
+    }).completionHandler(onSuccess(v -> {
+      vertices[0].eventBus().consumer(ADDRESS1, msg -> {
+        System.out.println("Also In 1");
+      }).completionHandler(onSuccess(v1 -> {
+        MessageConsumer c = vertices[1].eventBus().consumer(ADDRESS1, msg -> {
+          System.out.println("in two");
+        });
+        c.completionHandler(onSuccess(v2 -> {
+          regLatch.countDown();
+        }));
+      }));
+//      consumers.add(c);
+    }));
+    awaitLatch(regLatch);
+
+    //    CountDownLatch closeLatch = new CountDownLatch(1);
+    //    consumers.forEach(c -> c.unregister(v -> closeLatch.countDown())
+    //    );
+    //    awaitLatch(closeLatch);
+
+    // Allow time for kill to be propagate
+    //    Thread.sleep(2000);
+
+    vertices[2].runOnContext(v -> {
+      // Now send some messages from node 2 - they should ALL go to node 0
+      EventBus ebSender = vertices[2].eventBus();
+      for (int i = 0; i < 10; i++) {
+        ebSender.send(ADDRESS1, "foo" + i);
+      }
+    });
+
+    await();
+
+  }
+
+  @Test
+  public void testSubsRemovedForUnregistration() throws Exception {
+    startNodes(3);
+    CountDownLatch regLatch = new CountDownLatch(1);
+    AtomicInteger cnt = new AtomicInteger();
+    List<MessageConsumer> consumers = new ArrayList<>();
+    vertices[0].eventBus().consumer(ADDRESS1, msg -> {
+      int c = cnt.getAndIncrement();
+      assertEquals(msg.body(), "foo" + c);
+      if (c == 9) {
+        testComplete();
+      }
+      if (c > 9) {
+        fail("too many messages");
+      }
+    }).completionHandler(onSuccess(v -> {
+      MessageConsumer c = vertices[1].eventBus().consumer(ADDRESS1, msg -> {
+        fail("shouldn't get message");
+      });
+      c.completionHandler(onSuccess(v2 -> {
+        regLatch.countDown();
+      }));
+      consumers.add(c);
+    }));
+    awaitLatch(regLatch);
+
+//    CountDownLatch closeLatch = new CountDownLatch(1);
+//    consumers.forEach(c -> c.unregister(v -> closeLatch.countDown())
+//    );
+//    awaitLatch(closeLatch);
+
+    // Allow time for kill to be propagate
+//    Thread.sleep(2000);
+
+    vertices[2].runOnContext(v -> {
+      // Now send some messages from node 2 - they should ALL go to node 0
+      EventBus ebSender = vertices[2].eventBus();
+      for (int i = 0; i < 10; i++) {
+        ebSender.send(ADDRESS1, "foo" + i);
+      }
+    });
+
+    await();
+
+  }
+
   private void testSubsRemoved(Consumer<CountDownLatch> action) throws Exception {
     startNodes(3);
     CountDownLatch regLatch = new CountDownLatch(1);
@@ -241,7 +332,7 @@ public class ClusteredEventBusTest extends ClusteredEventBusTestBase {
         fail("too many messages");
       }
     }).completionHandler(onSuccess(v -> {
-      vertices[1].eventBus().consumer(ADDRESS1, msg -> {
+      vertices[1].eventBus().consumer(ADDRESS1, true, msg -> {
         fail("shouldn't get message");
       }).completionHandler(onSuccess(v2 -> {
         regLatch.countDown();
