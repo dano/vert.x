@@ -30,6 +30,7 @@ import org.junit.Test;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -229,47 +230,46 @@ public class ClusteredEventBusTest extends ClusteredEventBusTestBase {
 
   }
 
+
   @Test
   public void testRoundRobining() throws Exception {
     startNodes(3);
     CountDownLatch regLatch = new CountDownLatch(1);
-    AtomicInteger cnt = new AtomicInteger();
-    List<MessageConsumer> consumers = new ArrayList<>();
+    CountDownLatch bigLatch = new CountDownLatch(12);
+    Map<String, AtomicInteger> countMap = new ConcurrentHashMap<>();
     vertices[0].eventBus().consumer(ADDRESS1, msg -> {
-      System.out.println("In 1");
+      System.out.println("In 1: " + msg.body());
+      countMap.putIfAbsent("1", new AtomicInteger(0));
+      countMap.get("1").incrementAndGet();
+      bigLatch.countDown();
     }).completionHandler(onSuccess(v -> {
       vertices[0].eventBus().consumer(ADDRESS1, msg -> {
-        System.out.println("Also In 1");
+        System.out.println("Also In 1 " + msg.body());
+        countMap.putIfAbsent("2", new AtomicInteger(0));
+        countMap.get("2").incrementAndGet();
+        bigLatch.countDown();
       }).completionHandler(onSuccess(v1 -> {
-        MessageConsumer c = vertices[1].eventBus().consumer(ADDRESS1, msg -> {
-          System.out.println("in two");
-        });
-        c.completionHandler(onSuccess(v2 -> {
+        vertices[1].eventBus().consumer(ADDRESS1, msg -> {
+          System.out.println("in two " + msg.body());
+          countMap.putIfAbsent("3", new AtomicInteger(0));
+          countMap.get("3").incrementAndGet();
+          bigLatch.countDown();
+        }).completionHandler(onSuccess(v2 -> {
           regLatch.countDown();
         }));
       }));
-//      consumers.add(c);
     }));
     awaitLatch(regLatch);
-
-    //    CountDownLatch closeLatch = new CountDownLatch(1);
-    //    consumers.forEach(c -> c.unregister(v -> closeLatch.countDown())
-    //    );
-    //    awaitLatch(closeLatch);
-
-    // Allow time for kill to be propagate
-    //    Thread.sleep(2000);
-
     vertices[2].runOnContext(v -> {
-      // Now send some messages from node 2 - they should ALL go to node 0
       EventBus ebSender = vertices[2].eventBus();
-      for (int i = 0; i < 10; i++) {
+      for (int i = 0; i < 12; i++) {
         ebSender.send(ADDRESS1, "foo" + i);
       }
     });
-
-    await();
-
+    awaitLatch(bigLatch);
+    assertEquals(3, countMap.get("1").get());
+    assertEquals(3, countMap.get("2").get());
+    assertEquals(6, countMap.get("3").get());
   }
 
   @Test

@@ -239,41 +239,14 @@ public class ClusteredEventBus extends EventBusImpl {
     clusteredSendReply(((ClusteredMessage) replierMessage).getSender(), sendContext);
   }
 
-  protected <T> void sendOrPub(SendContextImpl<T> sendContext) {
-    String address = sendContext.message.address();
-    Handler<AsyncResult<ChoosableIterable<ServerID>>> resultHandler = asyncResult -> {
-      if (asyncResult.succeeded()) {
-        ChoosableIterable<ServerID> serverIDs = asyncResult.result();
-        if (serverIDs != null && !serverIDs.isEmpty()) {
-          sendToSubs(serverIDs, sendContext);
-        } else {
-          metrics.messageSent(address, !sendContext.message.send(), true, false);
-          deliverMessageLocally(sendContext);
-        }
-      } else {
-        log.error("Failed to send message", asyncResult.cause());
-      }
-    };
-    if (Vertx.currentContext() == null) {
-      // Guarantees the order when there is no current context
-      sendNoContext.runOnContext(v -> {
-        subs.get(address, resultHandler);
-      });
-    } else {
-      subs.get(address, resultHandler);
-    }
-  }
-
 //  @Override
 //  protected <T> void sendOrPub(SendContextImpl<T> sendContext) {
 //    String address = sendContext.message.address();
-//    Handler<AsyncResult<CompositeFuture>> resultHandler = asyncResult -> {
+//    Handler<AsyncResult<ChoosableIterable<ServerID>>> resultHandler = asyncResult -> {
 //      if (asyncResult.succeeded()) {
-//        ChoosableIterable<ServerID> serverIDs = asyncResult.result().resultAt(0);
-//        ChoosableIterable<ServerID> regexServerIDs = asyncResult.result().resultAt(1);
-//        ChoosableIterable<ServerID> hah = new CompoundChoosableIterable<>(new AtomicInteger(0), serverIDs, regexServerIDs);
-//        if (!hah.isEmpty()) {
-//          sendToSubs(hah, sendContext);
+//        ChoosableIterable<ServerID> serverIDs = asyncResult.result();
+//        if (serverIDs != null && !serverIDs.isEmpty()) {
+//          sendToSubs(serverIDs, sendContext);
 //        } else {
 //          metrics.messageSent(address, !sendContext.message.send(), true, false);
 //          deliverMessageLocally(sendContext);
@@ -282,34 +255,62 @@ public class ClusteredEventBus extends EventBusImpl {
 //        log.error("Failed to send message", asyncResult.cause());
 //      }
 //    };
-//    Future<ChoosableIterable<ServerID>> subFut = Future.future();
-//    Future<ChoosableIterable<ServerID>> regexSubFut = Future.future();
-//    Handler<Void> h = v -> {
-//      subs.get(address, subFut.completer());
-//      regexKeys.get(REGEX_KEYS_KEY, result -> {
-//        if (result.succeeded()) {
-//          String key = StreamSupport.stream(result.result().spliterator(), false)
-//              .filter(address::startsWith)
-//              .findFirst()
-//              .orElse(null);
-//          if (key != null) {
-//            regexSubs.get(key, regexSubFut.completer());
-//          } else {
-//            regexSubFut.complete(null);
-//          }
-//        } else {
-//          resultHandler.handle(Future.failedFuture(result.cause()));
-//        }
-//      });
-//      CompositeFuture.all(subFut, regexSubFut).setHandler(resultHandler);
-//    };
 //    if (Vertx.currentContext() == null) {
 //      // Guarantees the order when there is no current context
-//      sendNoContext.runOnContext(h);
+//      sendNoContext.runOnContext(v -> {
+//        subs.get(address, resultHandler);
+//      });
 //    } else {
-//      h.handle(null);
+//      subs.get(address, resultHandler);
 //    }
 //  }
+
+  @Override
+  protected <T> void sendOrPub(SendContextImpl<T> sendContext) {
+    String address = sendContext.message.address();
+    Handler<AsyncResult<CompositeFuture>> resultHandler = asyncResult -> {
+      if (asyncResult.succeeded()) {
+        ChoosableIterable<ServerID> serverIDs = asyncResult.result().resultAt(0);
+        ChoosableIterable<ServerID> regexServerIDs = asyncResult.result().resultAt(1);
+        ChoosableIterable<ServerID> hah = new CompoundChoosableIterable<>(new AtomicInteger(0), serverIDs, regexServerIDs);
+        if (!hah.isEmpty()) {
+          sendToSubs(hah, sendContext);
+        } else {
+          metrics.messageSent(address, !sendContext.message.send(), true, false);
+          deliverMessageLocally(sendContext);
+        }
+      } else {
+        log.error("Failed to send message", asyncResult.cause());
+      }
+    };
+    Future<ChoosableIterable<ServerID>> subFut = Future.future();
+    Future<ChoosableIterable<ServerID>> regexSubFut = Future.future();
+    Handler<Void> h = v -> {
+      subs.get(address, subFut.completer());
+      regexKeys.get(REGEX_KEYS_KEY, result -> {
+        if (result.succeeded()) {
+          String key = StreamSupport.stream(result.result().spliterator(), false)
+              .filter(address::startsWith)
+              .findFirst()
+              .orElse(null);
+          if (key != null) {
+            regexSubs.get(key, regexSubFut.completer());
+          } else {
+            regexSubFut.complete(null);
+          }
+        } else {
+          resultHandler.handle(Future.failedFuture(result.cause()));
+        }
+      });
+      CompositeFuture.all(subFut, regexSubFut).setHandler(resultHandler);
+    };
+    if (Vertx.currentContext() == null) {
+      // Guarantees the order when there is no current context
+      sendNoContext.runOnContext(h);
+    } else {
+      h.handle(null);
+    }
+  }
 
   @Override
   protected String generateReplyAddress() {
