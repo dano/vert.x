@@ -969,13 +969,49 @@ public class LocalEventBusTest extends EventBusTestBase {
   }
 
   @Override
+  protected <T, R> void testSendWildcard(T val, R received, Consumer<T> consumer, DeliveryOptions options) {
+    eb.<T>consumer(ADDRESS1, true).handler((Message<T> msg) -> {
+      if (consumer == null) {
+        assertEquals(received, msg.body());
+        if (options != null && options.getHeaders() != null) {
+          assertNotNull(msg.headers());
+          assertEquals(options.getHeaders().size(), msg.headers().size());
+          for (Map.Entry<String, String> entry: options.getHeaders().entries()) {
+            assertEquals(msg.headers().get(entry.getKey()), entry.getValue());
+          }
+        }
+      } else {
+        consumer.accept(msg.body());
+      }
+      testComplete();
+    });
+    if (options != null) {
+      eb.send(ADDRESS1 + ADDRESS2, val, options);
+    } else {
+      eb.send(ADDRESS1 + ADDRESS2, val);
+    }
+    await();
+
+  }
+
+  @Override
   protected <T> void testSend(T val, Consumer<T> consumer) {
     testSend(val, val, consumer, null);
   }
 
   @Override
+  protected <T> void testSendWildcard(T val, Consumer<T> consumer) {
+    testSendWildcard(val, val, consumer, null);
+  }
+
+  @Override
   protected <T> void testReply(T val, Consumer<T> consumer) {
     testReply(val, val, consumer, null);
+  }
+
+  @Override
+  protected <T> void testReplyWildcard(T val, Consumer<T> consumer) {
+    testReplyWildcard(val, val, consumer, null);
   }
 
   @Override
@@ -991,6 +1027,35 @@ public class LocalEventBusTest extends EventBusTestBase {
       }
     });
     eb.send(ADDRESS1, str, onSuccess((Message<R> reply) -> {
+      if (consumer == null) {
+        assertEquals(received, reply.body());
+        if (options != null && options.getHeaders() != null) {
+          assertNotNull(reply.headers());
+          assertEquals(options.getHeaders().size(), reply.headers().size());
+          for (Map.Entry<String, String> entry: options.getHeaders().entries()) {
+            assertEquals(reply.headers().get(entry.getKey()), entry.getValue());
+          }
+        }
+      } else {
+        consumer.accept(reply.body());
+      }
+      testComplete();
+    }));
+    await();
+  }
+
+  @Override
+  protected <T, R> void testReplyWildcard(T val, R received, Consumer<R> consumer, DeliveryOptions options) {
+    String str = TestUtils.randomUnicodeString(1000);
+    eb.consumer(ADDRESS1, true).handler(msg -> {
+      assertEquals(str, msg.body());
+      if (options != null) {
+        msg.reply(val, options);
+      } else {
+        msg.reply(val);
+      }
+    });
+    eb.send(ADDRESS1 + ADDRESS2, str, onSuccess((Message<R> reply) -> {
       if (consumer == null) {
         assertEquals(received, reply.body());
         if (options != null && options.getHeaders() != null) {
@@ -1028,6 +1093,29 @@ public class LocalEventBusTest extends EventBusTestBase {
     eb.<T>consumer(ADDRESS1).handler(new MyHandler());
     eb.publish(ADDRESS1, val);
     await();
+  }
+
+  @Override
+  protected <T> void testPublishWildcard(T val, Consumer<T> consumer) {
+    AtomicInteger count = new AtomicInteger();
+    class MyHandler implements Handler<Message<T>> {
+      @Override
+      public void handle(Message<T> msg) {
+        if (consumer == null) {
+          assertEquals(val, msg.body());
+        } else {
+          consumer.accept(msg.body());
+        }
+        if (count.incrementAndGet() == 2) {
+          testComplete();
+        }
+      }
+    }
+    eb.<T>consumer(ADDRESS1, true).handler(new MyHandler());
+    eb.<T>consumer(ADDRESS1, true).handler(new MyHandler());
+    eb.publish(ADDRESS1 + ADDRESS2, val);
+    await();
+
   }
 
   @Test
@@ -1340,6 +1428,162 @@ public class LocalEventBusTest extends EventBusTestBase {
       eb.send(ADDRESS1 + "HEY", "hey");
     });
     awaitLatch(latch);
+  }
+
+  @Test
+  public void testSendRoundRobinWithWildcard() {
+    String str = TestUtils.randomUnicodeString(100);
+    int numHandlers = 10;
+    int numMessages = 100;
+    Handler<Message<String>>[] handlers = new Handler[numHandlers];
+    Map<Handler, Integer> countMap = new ConcurrentHashMap<>();
+    AtomicInteger totalCount = new AtomicInteger();
+    for (int i = 0; i < numHandlers; i++) {
+      int index = i;
+      handlers[i] = (Message<String> msg) -> {
+        assertEquals(str, msg.body());
+        Integer cnt = countMap.get(handlers[index]);
+        int icnt = cnt == null ? 0 : cnt;
+        icnt++;
+        countMap.put(handlers[index], icnt);
+        if (totalCount.incrementAndGet() == numMessages) {
+          assertEquals(numHandlers, countMap.size());
+          for (Integer ind: countMap.values()) {
+            assertEquals(numMessages / numHandlers, ind.intValue());
+          }
+          testComplete();
+        }
+      };
+      if ((i % 2) == 0) {
+        eb.<String>consumer(ADDRESS1).handler(handlers[i]);
+      } else {
+        eb.<String>consumer(ADDRESS1, true).handler(handlers[i]);
+      }
+    }
+
+    for (int i = 0; i < numMessages; i++) {
+      eb.send(ADDRESS1, str);
+    }
+
+    await();
+  }
+
+  @Test
+  public void testSendRoundRobinWildcardOnly() {
+    String str = TestUtils.randomUnicodeString(100);
+    int numHandlers = 10;
+    int numMessages = 100;
+    Handler<Message<String>>[] handlers = new Handler[numHandlers];
+    Map<Handler, Integer> countMap = new ConcurrentHashMap<>();
+    AtomicInteger totalCount = new AtomicInteger();
+    for (int i = 0; i < numHandlers; i++) {
+      int index = i;
+      handlers[i] = (Message<String> msg) -> {
+        assertEquals(str, msg.body());
+        Integer cnt = countMap.get(handlers[index]);
+        int icnt = cnt == null ? 0 : cnt;
+        icnt++;
+        countMap.put(handlers[index], icnt);
+        if (totalCount.incrementAndGet() == numMessages) {
+          assertEquals(numHandlers, countMap.size());
+          for (Integer ind: countMap.values()) {
+            assertEquals(numMessages / numHandlers, ind.intValue());
+          }
+          testComplete();
+        }
+      };
+      eb.<String>consumer(ADDRESS1).handler(handlers[i]);
+      eb.<String>consumer(ADDRESS1, true).handler(handlers[i]);
+    }
+
+    for (int i = 0; i < numMessages; i++) {
+      eb.send(ADDRESS1 + "hey", str);
+    }
+
+    await();
+  }
+
+  @Test
+  public void testPublishWildcardConsumer() {
+    String str = TestUtils.randomUnicodeString(100);
+    AtomicInteger count = new AtomicInteger();
+    eb.<String>consumer(ADDRESS1, true).handler((Message<String> msg) -> {
+      if (count.incrementAndGet() == 2) {
+        testComplete();
+      }
+    });
+    eb.publish(ADDRESS1, str);
+    eb.publish(ADDRESS1 + ADDRESS2, str);
+    await();
+  }
+
+  @Test
+  public void testRegisterUnregisterWildcard() {
+    String str = TestUtils.randomUnicodeString(100);
+    Handler<Message<String>> handler = msg -> fail("Should not receive message");
+    MessageConsumer reg = eb.<String>consumer(ADDRESS1, true).handler(handler);
+    assertEquals(ADDRESS1, reg.address());
+    reg.unregister();
+    eb.send(ADDRESS1, str);
+    vertx.setTimer(1000, id -> testComplete());
+    await();
+  }
+
+  @Test
+  public void testUnregisterTwiceWildcard() {
+    Handler<Message<String>> handler = msg -> {};
+    MessageConsumer reg = eb.<String>consumer(ADDRESS1, true).handler(handler);
+    reg.unregister();
+    reg.unregister(); // Ok to unregister twice
+    testComplete();
+  }
+
+  @Test
+  public void testSendRegisterSomeUnregisterOneWildcard() {
+    String str = TestUtils.randomUnicodeString(100);
+    AtomicInteger totalCount = new AtomicInteger();
+    Handler<Message<String>> handler1 = msg -> fail("Should not receive message");
+    Handler<Message<String>> handler2 = msg -> {
+      assertEquals(str, msg.body());
+      if (totalCount.incrementAndGet() == 2) {
+        testComplete();
+      }
+    };
+    Handler<Message<String>> handler3 = msg -> {
+      assertEquals(str, msg.body());
+      if (totalCount.incrementAndGet() == 2) {
+        testComplete();
+      }
+    };
+
+    MessageConsumer reg = eb.<String>consumer(ADDRESS1, true).handler(handler1);
+    eb.<String>consumer(ADDRESS1, true).handler(handler2);
+    eb.<String>consumer(ADDRESS1).handler(handler3);
+    reg.unregister();
+    eb.send(ADDRESS1, str);
+    eb.send(ADDRESS1, str);
+
+    await();
+  }
+
+  @Test
+  public void testSendRegisterSameHandlerMultipleTimesWildcard() {
+    String str = TestUtils.randomUnicodeString(100);
+    AtomicInteger totalCount = new AtomicInteger();
+    Handler<Message<String>> handler = (Message<String> msg) -> {
+      assertEquals(str, msg.body());
+      if (totalCount.incrementAndGet() == 3) {
+        testComplete();
+      }
+    };
+    eb.<String>consumer(ADDRESS1, true).handler(handler);
+    eb.<String>consumer(ADDRESS1).handler(handler);
+    eb.<String>consumer(ADDRESS1).handler(handler);
+
+    eb.send(ADDRESS1, str);
+    eb.send(ADDRESS1, str);
+    eb.send(ADDRESS1, str);
+    await();
   }
 }
 

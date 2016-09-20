@@ -60,6 +60,11 @@ public abstract class EventBusTestBase extends VertxTestBase {
     String str = TestUtils.randomUnicodeString(100);
     testSend(str);
   }
+  @Test
+  public void testSendStringWildcard() {
+    String str = TestUtils.randomUnicodeString(100);
+    testSendWildcard(str);
+  }
 
   @Test
   public void testReplyString() {
@@ -68,9 +73,21 @@ public abstract class EventBusTestBase extends VertxTestBase {
   }
 
   @Test
+  public void testReplyStringWildcard() {
+    String str = TestUtils.randomUnicodeString(100);
+    testReplyWildcard(str);
+  }
+
+  @Test
   public void testPublishString() {
     String str = TestUtils.randomUnicodeString(100);
     testPublish(str);
+  }
+
+  @Test
+  public void testPublishStringWildcard() {
+    String str = TestUtils.randomUnicodeString(100);
+    testPublishWildcard(str);
   }
 
   @Test
@@ -385,23 +402,45 @@ public abstract class EventBusTestBase extends VertxTestBase {
     testSend(val, null);
   }
 
+  protected <T> void testSendWildcard(T val) {
+    testSendWildcard(val, null);
+  }
+
   protected abstract <T, R> void testSend(T val, R received, Consumer<T> consumer, DeliveryOptions options);
 
+  protected abstract <T, R> void testSendWildcard(T val, R received, Consumer<T> consumer, DeliveryOptions options);
+
   protected abstract <T> void testSend(T val, Consumer<T> consumer);
+
+  protected abstract <T> void testSendWildcard(T val, Consumer<T> consumer);
 
   protected <T> void testReply(T val) {
     testReply(val, null);
   }
 
+  protected <T> void testReplyWildcard(T val) {
+    testReplyWildcard(val, null);
+  }
+
   protected abstract <T> void testReply(T val, Consumer<T> consumer);
 
+  protected abstract <T> void testReplyWildcard(T val, Consumer<T> consumer);
+
   protected abstract <T, R> void testReply(T val, R received, Consumer<R> consumer, DeliveryOptions options);
+
+  protected abstract <T, R> void testReplyWildcard(T val, R received, Consumer<R> consumer, DeliveryOptions options);
 
   protected <T> void testPublish(T val) {
     testPublish(val, null);
   }
 
+  protected <T> void testPublishWildcard(T val) {
+    testPublishWildcard(val, null);
+  }
+
   protected abstract <T> void testPublish(T val, Consumer<T> consumer);
+
+  protected abstract <T> void testPublishWildcard(T val, Consumer<T> consumer);
 
   public static class MySystemDecoder implements MessageCodec<MyPOJO, String> {
 

@@ -11,14 +11,12 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
-/**
- * TODO comment me
- */
 public class CompoundHandlers {
-  private List<Handlers> handlersList;
-  private final AtomicInteger pos = new AtomicInteger(0);
+  private final List<Handlers> handlersList;
+  private final AtomicInteger pos;
 
-  public CompoundHandlers(Handlers... handlers) {
+  public CompoundHandlers(AtomicInteger pos, Handlers... handlers) {
+    this.pos = pos;
     handlersList = Arrays.asList(handlers);
   }
   public int size() {

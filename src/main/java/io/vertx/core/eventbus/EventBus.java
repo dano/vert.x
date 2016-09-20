@@ -166,6 +166,15 @@ public interface EventBus extends Measured {
   <T> MessageConsumer<T> localConsumer(String address);
 
   /**
+   * Like {@link #consumer(String)} but the address won't be propagated across the cluster.
+   *
+   * @param address  the address to register it at
+   * @param useWildcards  if true, the address will be matched with wildcards.
+   * @return the event bus message consumer
+   */
+  <T> MessageConsumer<T> localConsumer(String address, boolean useWildcards);
+
+  /**
    * Like {@link #consumer(String, Handler)} but the address won't be propagated across the cluster.
    *
    * @param address  the address that will register it at
@@ -173,6 +182,16 @@ public interface EventBus extends Measured {
    * @return the event bus message consumer
    */
   <T> MessageConsumer<T> localConsumer(String address, Handler<Message<T>> handler);
+
+  /**
+   * Like {@link #consumer(String, Handler)} but the address won't be propagated across the cluster.
+   *
+   * @param address  the address that will register it at
+   * @param useWildcards  if true, the address will be matched with wildcards.
+   * @param handler  the handler that will process the received messages
+   * @return the event bus message consumer
+   */
+  <T> MessageConsumer<T> localConsumer(String address, boolean useWildcards, Handler<Message<T>> handler);
 
   /**
    * Create a message sender against the specified address.

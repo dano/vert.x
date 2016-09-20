@@ -32,6 +32,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 
@@ -50,6 +51,7 @@ public class EventBusImpl implements EventBus, MetricsProvider {
   protected final EventBusMetrics metrics;
   protected final ConcurrentMap<String, Handlers> handlerMap = new ConcurrentHashMap<>();
   protected final ConcurrentMap<String, Handlers> regexHandlerMap = new ConcurrentHashMap<>();
+  protected final ConcurrentMap<String, AtomicInteger> posMap = new ConcurrentHashMap<>();
   protected final CodecManager codecManager = new CodecManager();
   protected volatile boolean started;
 
@@ -165,14 +167,24 @@ public class EventBusImpl implements EventBus, MetricsProvider {
 
   @Override
   public <T> MessageConsumer<T> localConsumer(String address) {
+    return localConsumer(address, false);
+  }
+
+  @Override
+  public <T> MessageConsumer<T> localConsumer(String address, boolean useWildcards) {
     checkStarted();
     Objects.requireNonNull(address, "address");
-    return new HandlerRegistration<>(vertx, metrics, this, address, null, true, false,
+    return new HandlerRegistration<>(vertx, metrics, this, address, null, true, useWildcards,
         null, -1);
   }
 
   @Override
   public <T> MessageConsumer<T> localConsumer(String address, Handler<Message<T>> handler) {
+    return localConsumer(address, false, handler);
+  }
+
+  @Override
+  public <T> MessageConsumer<T> localConsumer(String address, boolean useWildcards, Handler<Message<T>> handler) {
     Objects.requireNonNull(handler, "handler");
     MessageConsumer<T> consumer = localConsumer(address);
     consumer.handler(handler);
@@ -402,12 +414,12 @@ public class EventBusImpl implements EventBus, MetricsProvider {
   private CompoundHandlers getHandlersForAddress(String address) {
     Handlers handlers = handlerMap.get(address);
     Handlers regexHandlers = regexGet(address);
-    return new CompoundHandlers(handlers, regexHandlers);
+    AtomicInteger pos = posMap.computeIfAbsent(address, x -> new AtomicInteger());
+    return new CompoundHandlers(pos, handlers, regexHandlers);
   }
 
   protected <T> boolean deliverMessageLocally(MessageImpl msg) {
     msg.setBus(this);
-    // TODO Need to keep the atomic int in CompoundHandlers across calls....
     CompoundHandlers handlers = getHandlersForAddress(msg.address());
     if (!handlers.isNull()) {
       if (msg.send()) {
