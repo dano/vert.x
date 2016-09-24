@@ -37,6 +37,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.StreamSupport;
 
@@ -58,6 +59,7 @@ public class ClusteredEventBus extends EventBusImpl {
   private static final String REGEX_SUBS_MAP_NAME = "__vertx.regex_subs";
   private static final String REGEX_KEYS_MAP_NAME = "__vertx.regex_keys";
   private static final String REGEX_KEYS_KEY = "keys";
+  private static final String POS_MAP_NAME = "__vertx.pos_map";
 
   private final ClusterManager clusterManager;
   private final HAManager haManager;
@@ -68,6 +70,7 @@ public class ClusteredEventBus extends EventBusImpl {
   private AsyncMultiMap<String, ServerID> subs;
   private AsyncMultiMap<String, ServerID> regexSubs;
   private AsyncMultiMap<String, String> regexKeys;
+  private AsyncMultiMap<String, AtomicBoolean> posMap;
   private ServerID serverID;
   private NetServer server;
 
@@ -123,14 +126,17 @@ public class ClusteredEventBus extends EventBusImpl {
     Future<AsyncMultiMap<String, ServerID>> ar2 = Future.future();
     Future<AsyncMultiMap<String, ServerID>> ar3 = Future.future();
     Future<AsyncMultiMap<String, String>> ar4 = Future.future();
+    Future<AsyncMultiMap<String, AtomicBoolean>> ar5 = Future.future();
     clusterManager.getAsyncMultiMap(SUBS_MAP_NAME, ar2.completer());
     clusterManager.getAsyncMultiMap(REGEX_SUBS_MAP_NAME, ar3.completer());
     clusterManager.getAsyncMultiMap(REGEX_KEYS_MAP_NAME, ar4.completer());
-    CompositeFuture.all(ar2, ar3, ar4).setHandler(r -> {
-      if (ar2.succeeded() && ar3.succeeded() && ar4.succeeded()) {
+    clusterManager.getAsyncMultiMap(POS_MAP_NAME, ar5.completer());
+    CompositeFuture.all(ar2, ar3, ar4, ar5).setHandler(r -> {
+      if (ar2.succeeded() && ar3.succeeded() && ar4.succeeded() && ar5.succeeded()) {
         subs = ar2.result();
         regexSubs = ar3.result();
         regexKeys = ar4.result();
+        posMap = ar5.result();
         server = vertx.createNetServer(getServerOptions());
 
         server.connectHandler(getServerHandler());
@@ -153,7 +159,7 @@ public class ClusteredEventBus extends EventBusImpl {
           }
         });
       } else {
-        Throwable cause = ar2.failed() ? ar2.cause() : ar3.failed() ? ar3.cause() : ar4.cause();
+        Throwable cause = ar2.failed() ? ar2.cause() : ar3.failed() ? ar3.cause() : ar4.failed() ? ar4.cause() : ar5.cause();
         if (resultHandler != null) {
           resultHandler.handle(Future.failedFuture(cause));
         } else {
@@ -272,7 +278,8 @@ public class ClusteredEventBus extends EventBusImpl {
       if (asyncResult.succeeded()) {
         ChoosableIterable<ServerID> serverIDs = asyncResult.result().resultAt(0);
         ChoosableIterable<ServerID> regexServerIDs = asyncResult.result().resultAt(1);
-        ChoosableIterable<ServerID> hah = new CompoundChoosableIterable<>(new AtomicInteger(0), serverIDs, regexServerIDs);
+        // Right now we always choose standard. Need to pull from posMap to fix. Add test to verify.
+        ChoosableIterable<ServerID> hah = new CompoundChoosableIterable<>(new AtomicBoolean(true), serverIDs, regexServerIDs);
         if (!hah.isEmpty()) {
           sendToSubs(hah, sendContext);
         } else {

@@ -1,68 +1,49 @@
-/*
- * This is the confidential unpublished intellectual property of EMC Corporation,
- * and includes without limitation exclusive copyright and trade secret rights
- * of EMC throughout the world.
- */
 package io.vertx.core.eventbus.impl;
 
-import java.util.Arrays;
-import java.util.List;
-import java.util.Objects;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 
 public class CompoundHandlers {
-  private final List<Handlers> handlersList;
-  private final AtomicInteger pos;
+  private final Handlers standardHandlers;
+  private final Handlers regexHandlers;
+  private AtomicBoolean isStandard;
 
-  public CompoundHandlers(AtomicInteger pos, Handlers... handlers) {
-    this.pos = pos;
-    handlersList = Arrays.asList(handlers);
+  public CompoundHandlers(AtomicBoolean isStandard, Handlers standardHandlers, Handlers regexHandlers) {
+    this.standardHandlers = standardHandlers;
+    this.regexHandlers = regexHandlers;
+    this.isStandard = isStandard;
   }
   public int size() {
-    return handlersList.stream()
-        .filter(Objects::nonNull)
-        .mapToInt(handlers -> handlers.list.size())
-        .sum();
+    return (standardHandlers != null ? standardHandlers.list.size() : 0)
+        + (regexHandlers != null ? regexHandlers.list.size() : 0);
   }
 
   public boolean isNull() {
-    return handlersList.get(0) == null && handlersList.get(1) == null;
+    return standardHandlers == null && regexHandlers == null;
   }
 
   public HandlerHolder choose() {
     while (true) {
-      int size = size();
-      if (size == 0) {
+      if (size() == 0) {
         return null;
       }
-      int p = pos.getAndIncrement();
-      if (p >= size - 1) {
-        pos.set(0);
+      HandlerHolder holder = null;
+      if(isStandard.get() && standardHandlers != null) {
+        holder = standardHandlers.choose();
+      } else if (regexHandlers != null) {
+        holder = regexHandlers.choose();
       }
-
-      // Go through each list of handlers.
-      for (Handlers h : handlersList) {
-        if (h == null) {
-          continue;
-        }
-        if (p > (h.list.size() - 1)) {
-          p -= h.list.size();
-          continue;
-        }
-        try {
-          return h.list.get(p);
-        } catch (IndexOutOfBoundsException e) {
-          // Can happen
-          pos.set(0);
-        }
+      isStandard.set(!isStandard.get());
+      if (holder != null) {
+        return holder;
       }
     }
   }
 
   public Stream<HandlerHolder> stream() {
-    return handlersList.stream()
-        .filter(Objects::nonNull)
-        .flatMap(handlers -> handlers.list.stream());
+    return Stream.concat(
+        standardHandlers != null ? standardHandlers.list.stream() : Stream.empty(),
+        regexHandlers != null ? regexHandlers.list.stream() : Stream.empty()
+    );
   }
 }

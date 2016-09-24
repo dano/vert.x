@@ -204,7 +204,7 @@ public class LocalEventBusTest extends EventBusTestBase {
     Map<Handler, Integer> countMap = new ConcurrentHashMap<>();
     AtomicInteger totalCount = new AtomicInteger();
     for (int i = 0; i < numHandlers; i++) {
-      int index = i;
+      final int index = i;
       handlers[i] = (Message<String> msg) -> {
         assertEquals(str, msg.body());
         Integer cnt = countMap.get(handlers[index]);
@@ -1433,13 +1433,15 @@ public class LocalEventBusTest extends EventBusTestBase {
   @Test
   public void testSendRoundRobinWithWildcard() {
     String str = TestUtils.randomUnicodeString(100);
-    int numHandlers = 10;
+    int numHandlers = 5;
     int numMessages = 100;
     Handler<Message<String>>[] handlers = new Handler[numHandlers];
+    Handler<Message<String>>[] wcHandlers = new Handler[numHandlers];
     Map<Handler, Integer> countMap = new ConcurrentHashMap<>();
+    AtomicInteger randCount = new AtomicInteger();
     AtomicInteger totalCount = new AtomicInteger();
     for (int i = 0; i < numHandlers; i++) {
-      int index = i;
+      final int index = i;
       handlers[i] = (Message<String> msg) -> {
         assertEquals(str, msg.body());
         Integer cnt = countMap.get(handlers[index]);
@@ -1448,17 +1450,30 @@ public class LocalEventBusTest extends EventBusTestBase {
         countMap.put(handlers[index], icnt);
         if (totalCount.incrementAndGet() == numMessages) {
           assertEquals(numHandlers, countMap.size());
-          for (Integer ind: countMap.values()) {
-            assertEquals(numMessages / numHandlers, ind.intValue());
+          for (Integer ind : countMap.values()) {
+            assertEquals(numMessages / 2 / numHandlers, ind.intValue());
+            assertEquals(randCount.intValue(), numMessages / 2);
           }
           testComplete();
         }
       };
-      if ((i % 2) == 0) {
-        eb.<String>consumer(ADDRESS1).handler(handlers[i]);
-      } else {
-        eb.<String>consumer(ADDRESS1, true).handler(handlers[i]);
-      }
+      eb.<String>consumer(ADDRESS1).handler(handlers[i]);
+    }
+
+    for (int i = 0; i < numHandlers; i++) {
+      wcHandlers[i] = (Message<String> msg) -> {
+        assertEquals(str, msg.body());
+        randCount.incrementAndGet();
+        if (totalCount.incrementAndGet() == numMessages) {
+          assertEquals(numHandlers, countMap.size());
+          for (Integer ind : countMap.values()) {
+            assertEquals(numMessages / numHandlers, ind.intValue());
+            assertEquals(randCount.intValue(), numMessages / 2);
+          }
+          testComplete();
+        }
+      };
+      eb.<String>consumer(ADDRESS1, true).handler(wcHandlers[i]);
     }
 
     for (int i = 0; i < numMessages; i++) {
@@ -1469,30 +1484,22 @@ public class LocalEventBusTest extends EventBusTestBase {
   }
 
   @Test
-  public void testSendRoundRobinWildcardOnly() {
+  public void testSendWildcardOnly() {
     String str = TestUtils.randomUnicodeString(100);
     int numHandlers = 10;
     int numMessages = 100;
     Handler<Message<String>>[] handlers = new Handler[numHandlers];
-    Map<Handler, Integer> countMap = new ConcurrentHashMap<>();
     AtomicInteger totalCount = new AtomicInteger();
     for (int i = 0; i < numHandlers; i++) {
-      int index = i;
-      handlers[i] = (Message<String> msg) -> {
+      handlers[i] =  msg -> {
         assertEquals(str, msg.body());
-        Integer cnt = countMap.get(handlers[index]);
-        int icnt = cnt == null ? 0 : cnt;
-        icnt++;
-        countMap.put(handlers[index], icnt);
         if (totalCount.incrementAndGet() == numMessages) {
-          assertEquals(numHandlers, countMap.size());
-          for (Integer ind: countMap.values()) {
-            assertEquals(numMessages / numHandlers, ind.intValue());
-          }
           testComplete();
         }
       };
-      eb.<String>consumer(ADDRESS1).handler(handlers[i]);
+      eb.<String>consumer(ADDRESS1).handler(msg -> {
+        fail("This should not be called.");
+      });
       eb.<String>consumer(ADDRESS1, true).handler(handlers[i]);
     }
 

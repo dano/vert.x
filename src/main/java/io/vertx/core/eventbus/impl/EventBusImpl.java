@@ -28,11 +28,10 @@ import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 
@@ -51,7 +50,7 @@ public class EventBusImpl implements EventBus, MetricsProvider {
   protected final EventBusMetrics metrics;
   protected final ConcurrentMap<String, Handlers> handlerMap = new ConcurrentHashMap<>();
   protected final ConcurrentMap<String, Handlers> regexHandlerMap = new ConcurrentHashMap<>();
-  protected final ConcurrentMap<String, AtomicInteger> posMap = new ConcurrentHashMap<>();
+  protected final ConcurrentMap<String, AtomicBoolean> standardOrRegexMap = new ConcurrentHashMap<>();
   protected final CodecManager codecManager = new CodecManager();
   protected volatile boolean started;
 
@@ -277,16 +276,10 @@ public class EventBusImpl implements EventBus, MetricsProvider {
     HandlerHolder holder = new HandlerHolder<>(metrics, registration, replyHandler, localOnly, useWildcards, context);
 
     Handlers handlers;
-    ConcurrentMap<String, Handlers> hMap;
-    if (useWildcards) {
-      handlers = regexHandlerMap.get(address);
-      hMap = regexHandlerMap;
-    } else {
-      handlers = handlerMap.get(address);
-      hMap = handlerMap;
-    }
+    ConcurrentMap<String, Handlers> hMap = useWildcards ? regexHandlerMap : handlerMap;
+    handlers = hMap.get(address);
     if (handlers == null) {
-      handlers = new Handlers();
+      handlers = useWildcards ? new WildcardHandlers() : new Handlers();
       Handlers prevHandlers = hMap.putIfAbsent(address, handlers);
       if (prevHandlers != null) {
         handlers = prevHandlers;
@@ -414,8 +407,8 @@ public class EventBusImpl implements EventBus, MetricsProvider {
   private CompoundHandlers getHandlersForAddress(String address) {
     Handlers handlers = handlerMap.get(address);
     Handlers regexHandlers = regexGet(address);
-    AtomicInteger pos = posMap.computeIfAbsent(address, x -> new AtomicInteger());
-    return new CompoundHandlers(pos, handlers, regexHandlers);
+    AtomicBoolean isStandard = standardOrRegexMap.computeIfAbsent(address, x -> new AtomicBoolean(false));
+    return new CompoundHandlers(isStandard, handlers, regexHandlers);
   }
 
   protected <T> boolean deliverMessageLocally(MessageImpl msg) {
